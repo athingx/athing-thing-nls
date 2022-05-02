@@ -7,13 +7,13 @@ import io.github.athingx.athing.thing.nls.SampleRate;
  */
 public class ThingNlsConfig {
 
-
     private String accessKeyId;
     private String accessKeySecret;
     private String appKey;
-
     private String remote = "wss://nls-gateway.cn-shanghai.aliyuncs.com/ws/v1";
-    private SampleRate sampleRate = SampleRate._8K;
+    private SampleRate sampleRate = SampleRate._16K;
+    private String snowboyCommonResPath = "/snowboy/common.res";
+    private String snowboyPersonResPath = "/snowboy/xiaokun.pmdl";
 
     public String getAccessKeyId() {
         return accessKeyId;
@@ -53,6 +53,22 @@ public class ThingNlsConfig {
 
     public void setSampleRate(SampleRate sampleRate) {
         this.sampleRate = sampleRate;
+    }
+
+    public String getSnowboyCommonResPath() {
+        return snowboyCommonResPath;
+    }
+
+    public void setSnowboyCommonResPath(String snowboyCommonResPath) {
+        this.snowboyCommonResPath = snowboyCommonResPath;
+    }
+
+    public String getSnowboyPersonResPath() {
+        return snowboyPersonResPath;
+    }
+
+    public void setSnowboyPersonResPath(String snowboyPersonResPath) {
+        this.snowboyPersonResPath = snowboyPersonResPath;
     }
 
 }

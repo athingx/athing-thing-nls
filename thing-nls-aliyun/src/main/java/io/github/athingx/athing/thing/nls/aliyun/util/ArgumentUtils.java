@@ -2,6 +2,7 @@ package io.github.athingx.athing.thing.nls.aliyun.util;
 
 public class ArgumentUtils {
 
+    @SafeVarargs
     public static <T> T getByOrder(T... values) {
         if (null != values) {
             for (final T value : values) {

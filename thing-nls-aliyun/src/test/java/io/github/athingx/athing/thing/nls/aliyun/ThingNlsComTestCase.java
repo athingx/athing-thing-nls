@@ -2,6 +2,8 @@ package io.github.athingx.athing.thing.nls.aliyun;
 
 import io.github.athingx.athing.thing.nls.ThingNlsCom;
 import io.github.athingx.athing.thing.nls.asr.RecordingFuture;
+import io.github.athingx.athing.thing.nls.asr.detect.SpeechDetectWakeUpOption;
+import io.github.athingx.athing.thing.nls.asr.detect.SpeechDetector;
 import io.github.athingx.athing.thing.nls.asr.recognize.SpeechRecognizeOption;
 import io.github.athingx.athing.thing.nls.asr.recognize.SpeechRecognizer;
 import io.github.athingx.athing.thing.nls.asr.transcribe.SpeechTranscribeOption;
@@ -48,7 +50,7 @@ public class ThingNlsComTestCase extends ThingSupport {
         final Mixer mixer = AudioSystem.getMixer(info);
         final ThingNlsCom thingNls = thing.getUniqueThingCom(ThingNlsCom.class);
         final AudioFormat format = new AudioFormat(
-                8000f,
+                16000f,
                 16,
                 1,
                 true,
@@ -101,7 +103,7 @@ public class ThingNlsComTestCase extends ThingSupport {
 
         final ThingNlsCom thingNls = thing.getUniqueThingCom(ThingNlsCom.class);
         final AudioFormat format = new AudioFormat(
-                8000f,
+                16000f,
                 16,
                 1,
                 true,
@@ -170,7 +172,7 @@ public class ThingNlsComTestCase extends ThingSupport {
 
         final ThingNlsCom thingNls = thing.getUniqueThingCom(ThingNlsCom.class);
         final AudioFormat format = new AudioFormat(
-                8000f,
+                16000f,
                 16,
                 1,
                 true,
@@ -188,6 +190,34 @@ public class ThingNlsComTestCase extends ThingSupport {
             Thread.sleep(60 * 1000L);
             future.stopRecording();
             future.get();
+        }
+
+    }
+
+    @Test
+    public void test$speech$channel$detect$wakeup() throws Exception {
+
+        final ThingNlsCom thingNls = thing.getUniqueThingCom(ThingNlsCom.class);
+        final AudioFormat format = new AudioFormat(
+                16000f,
+                16,
+                1,
+                true,
+                false
+        );
+
+        try (final SpeechDetector detector = thingNls.openSpeechDetector().get();
+             final TargetDataChannel channel = new TargetDataChannel(AudioSystem.getTargetDataLine(format))) {
+
+            channel.getTargetDataLine().open(format);
+            channel.getTargetDataLine().start();
+
+            for (int index = 0; index < 5; index++) {
+                detector.detectWakeUp(channel, new SpeechDetectWakeUpOption())
+                        .onSuccess(v -> System.out.println("wakeup!"))
+                        .get();
+            }
+
         }
 
     }

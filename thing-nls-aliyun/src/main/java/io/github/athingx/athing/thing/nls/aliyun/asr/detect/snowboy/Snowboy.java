@@ -6,22 +6,21 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
 
 import static io.github.athingx.athing.thing.nls.aliyun.util.SystemUtils.*;
 
 public class Snowboy implements AutoCloseable {
 
+    private final static Map<String, File> resourceFileCache = new HashMap<>();
     private final static File SNOWBOY_LIB_FILE;
-    private final static File SNOWBOY_RES_COMM;
-    private final static File SNOWBOY_RES_PMDL;
 
     static {
 
         // 加载关键资源
         try {
             SNOWBOY_LIB_FILE = loadingSnowboyLibFile();
-            SNOWBOY_RES_COMM = loadingSnowboyResComm();
-            SNOWBOY_RES_PMDL = loadingSnowboyResPmdl();
         } catch (IOException cause) {
             throw new RuntimeException("snowboy loading resource error!", cause);
         }
@@ -58,33 +57,7 @@ public class Snowboy implements AutoCloseable {
 
     }
 
-    /**
-     * 加载公共资源文件
-     *
-     * @return snowboy公共资源
-     * @throws IOException 加载失败
-     */
-    private static File loadingSnowboyResComm() throws IOException {
-        return loadingResFile(
-                "/snowboy/common.res",
-                "snowboy-common",
-                "res"
-        );
-    }
 
-    /**
-     * 加载唤醒模型文件
-     *
-     * @return snowboy唤醒模型
-     * @throws IOException 加载失败
-     */
-    private static File loadingSnowboyResPmdl() throws IOException {
-        return loadingResFile(
-                "/snowboy/xiaokun.pmdl",
-                "snowboy-xiaokun",
-                "pmdl"
-        );
-    }
 
     /**
      * 从资源中加载文件
@@ -95,7 +68,12 @@ public class Snowboy implements AutoCloseable {
      * @return 资源文件
      * @throws IOException 加载失败
      */
-    private static File loadingResFile(String resourceName, String prefix, String suffix) throws IOException {
+    private static synchronized File loadingResFile(String resourceName, String prefix, String suffix) throws IOException {
+
+        if (resourceFileCache.containsKey(resourceName)) {
+            return resourceFileCache.get(resourceName);
+        }
+
         try (final InputStream input = Snowboy.class.getResourceAsStream(resourceName)) {
             if (null == input) {
                 throw new IOException(String.format("resource: %s not existed!", resourceName));
@@ -110,6 +88,7 @@ public class Snowboy implements AutoCloseable {
                 }
                 output.flush();
             }
+            resourceFileCache.put(resourceName, resFile);
             return resFile;
         }
     }
@@ -119,19 +98,14 @@ public class Snowboy implements AutoCloseable {
 
     private final SnowboyDetect detect;
 
-    public Snowboy() {
-        this.detect = initSnowboyDetect();
-    }
-
-    private SnowboyDetect initSnowboyDetect() {
-        final SnowboyDetect detect = new SnowboyDetect(
-                SNOWBOY_RES_COMM.getAbsolutePath(),
-                SNOWBOY_RES_PMDL.getAbsolutePath()
+    public Snowboy(String commonResPath, String personResPath) throws IOException {
+        this.detect = new SnowboyDetect(
+                loadingResFile(commonResPath, "common", "res").getAbsolutePath(),
+                loadingResFile(personResPath, "person", "pmdl").getAbsolutePath()
         );
         detect.SetSensitivity("0.5");
         detect.SetAudioGain(1);
         detect.ApplyFrontend(false);
-        return detect;
     }
 
     /**

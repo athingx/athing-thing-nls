@@ -18,6 +18,8 @@ public class ThingNlsBoot implements ThingBoot {
     public static final String REMOTE = "remote";
     public static final String APP_KEY = "app-key";
     public static final String SAMPLE_RATE = "sample-rate";
+    public static final String SNOWBOY_COMMON_RES = "snowboy-common-res";
+    public static final String SNOWBOY_PERSON_RES = "snowboy-person-res";
 
     @Override
     public ThingCom[] boot(String productId, String thingId, ThingBootArgument argument) {
@@ -26,7 +28,9 @@ public class ThingNlsBoot implements ThingBoot {
         config.setAccessKeySecret(Objects.requireNonNull(argument.getArgument(ACCESS_KEY_SECRET, cString)));
         config.setAppKey(Objects.requireNonNull(argument.getArgument(APP_KEY, cString)));
         config.setRemote(argument.getArgument(REMOTE, cString, "wss://nls-gateway.cn-shanghai.aliyuncs.com/ws/v1"));
-        config.setSampleRate(SampleRate.valueOf(argument.getArgument(SAMPLE_RATE, cFloat, 8000f)));
+        config.setSampleRate(SampleRate.valueOf(argument.getArgument(SAMPLE_RATE, cFloat, 16000f)));
+        config.setSnowboyCommonResPath(argument.getArgument(SNOWBOY_COMMON_RES, cString, "/snowboy/common.res"));
+        config.setSnowboyPersonResPath(argument.getArgument(SNOWBOY_PERSON_RES, cString, "/snowboy/xiaokun.pmdl"));
         return new ThingCom[]{
                 new ThingNlsComImpl(config)
         };

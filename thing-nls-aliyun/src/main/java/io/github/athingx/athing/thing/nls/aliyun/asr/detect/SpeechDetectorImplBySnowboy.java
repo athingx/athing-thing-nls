@@ -12,6 +12,7 @@ import io.github.oldmanpushcart.jpromisor.ListenableFuture;
 import io.github.oldmanpushcart.jpromisor.Promisor;
 
 import javax.sound.sampled.*;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.Executor;
@@ -27,11 +28,11 @@ public class SpeechDetectorImplBySnowboy implements SpeechDetector {
     private final Snowboy snowboy;
     private final ReentrantLock lock = new ReentrantLock();
 
-    public SpeechDetectorImplBySnowboy(ThingNlsConfig config, Executor executor) {
+    public SpeechDetectorImplBySnowboy(ThingNlsConfig config, Executor executor) throws IOException {
         this.config = config;
         this.executor = executor;
         this._string = "nls:/%s/detector".formatted(config.getAppKey());
-        this.snowboy = new Snowboy();
+        this.snowboy = new Snowboy(config.getSnowboyCommonResPath(), config.getSnowboyPersonResPath());
     }
 
     // 打开音频线路
