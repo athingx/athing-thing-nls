@@ -5,6 +5,7 @@ import com.alibaba.nls.client.protocol.NlsClient;
 import io.github.athingx.athing.thing.nls.SampleRate;
 import io.github.athingx.athing.thing.nls.aliyun.ThingNlsConfig;
 import io.github.athingx.athing.thing.nls.aliyun.asr.RecordingPromise;
+import io.github.athingx.athing.thing.nls.aliyun.handler.TargetDataChannel;
 import io.github.athingx.athing.thing.nls.aliyun.sdk.transcriber.AliyunSpeechTranscriber;
 import io.github.athingx.athing.thing.nls.aliyun.sdk.transcriber.AliyunSpeechTranscriberListener;
 import io.github.athingx.athing.thing.nls.aliyun.sdk.transcriber.AliyunSpeechTranscriberResponse;
@@ -18,6 +19,8 @@ import io.github.oldmanpushcart.jpromisor.FutureFunction;
 import io.github.oldmanpushcart.jpromisor.Promise;
 
 import javax.sound.sampled.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
@@ -30,7 +33,7 @@ public class SpeechTranscriberImplByAliyun implements SpeechTranscriber {
     private final Executor executor;
     private final String _string;
 
-    private final byte[] data = new byte[10240];
+    private final ByteBuffer buffer = ByteBuffer.allocate(10240);
     private final AliyunSpeechTranscriber transcriber;
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicReference<Process> processRef = new AtomicReference<>();
@@ -62,6 +65,12 @@ public class SpeechTranscriberImplByAliyun implements SpeechTranscriber {
         );
     }
 
+    private void setupOption(SampleRate sampleRate) {
+        transcriber.setAppKey(config.getAppKey());
+        transcriber.setFormat(InputFormatEnum.PCM);
+        transcriber.setSampleRate((int) sampleRate.getValue());
+    }
+
     // 设置扩展参数
     private void setupExtOption(SpeechTranscribeOption option) {
         option.option("enable-itn", transcriber::setEnableITN);
@@ -84,6 +93,27 @@ public class SpeechTranscriberImplByAliyun implements SpeechTranscriber {
         return line;
     }
 
+    private void recordingLoop(RecordingPromise promise, ReadableByteChannel channel) throws Exception {
+        promise.<RecordingPromise>promise().recording(() -> {
+            while (!promise.isDone() && isStarted()) {
+
+                buffer.clear();
+                channel.read(buffer);
+                buffer.flip();
+
+                /*
+                 * 这里需要加一把锁，因为外边随时可能会进行stop()操作
+                 */
+                synchronized (transcriber) {
+                    if (isStarted()) {
+                        transcriber.send(buffer.array(), buffer.arrayOffset(), buffer.remaining());
+                    }
+                }
+
+            }
+        });
+    }
+
     @Override
     public RecordingFuture transcribe(Mixer mixer, SpeechTranscribeOption option, SentenceHandler handler) {
         return new InnerRecordingPromise().execute(promise -> promise.fulfill(executor, (FutureFunction.FutureExecutable) () -> {
@@ -94,9 +124,7 @@ public class SpeechTranscriberImplByAliyun implements SpeechTranscriber {
                 final AudioFormat format = getAudioFormat(sampleRate);
 
                 // 设置参数
-                transcriber.setAppKey(config.getAppKey());
-                transcriber.setFormat(InputFormatEnum.PCM);
-                transcriber.setSampleRate((int) sampleRate.getValue());
+                setupOption(sampleRate);
                 setupExtOption(option);
 
                 // 语音识别开始
@@ -107,21 +135,8 @@ public class SpeechTranscriberImplByAliyun implements SpeechTranscriber {
                     line.start();
                     transcriber.start();
 
-                    promise.<RecordingPromise>promise().recording(() -> {
-                        while (!promise.isDone() && isStarted()) {
-                            final int size = line.read(data, 0, data.length);
-
-                            /*
-                             * 这里需要加一把锁，因为外边随时可能会进行stop()操作
-                             */
-                            synchronized (transcriber) {
-                                if (isStarted()) {
-                                    transcriber.send(data, 0, size);
-                                }
-                            }
-
-                        }
-                    });
+                    // 语音识别开始
+                    recordingLoop(promise.promise(), new TargetDataChannel(line));
 
 
                 } finally {
@@ -129,6 +144,39 @@ public class SpeechTranscriberImplByAliyun implements SpeechTranscriber {
                     cleanExtOption();
                 }
 
+
+            } finally {
+                lock.unlock();
+            }
+        })).future();
+    }
+
+    @Override
+    public RecordingFuture transcribe(ReadableByteChannel channel, SpeechTranscribeOption option, SentenceHandler handler) {
+        return new InnerRecordingPromise().execute(promise -> promise.fulfill(executor, (FutureFunction.FutureExecutable) () -> {
+            lock.lockInterruptibly();
+            try {
+
+                final SampleRate sampleRate = getSampleRate(option);
+
+                // 设置参数
+                setupOption(sampleRate);
+                setupExtOption(option);
+
+                // 语音识别开始
+                try {
+
+                    // 资源准备
+                    processRef.set(new Process(promise, handler));
+                    transcriber.start();
+
+                    // 语音识别开始
+                    recordingLoop(promise.promise(), channel);
+
+                } finally {
+                    processRef.set(null);
+                    cleanExtOption();
+                }
 
             } finally {
                 lock.unlock();

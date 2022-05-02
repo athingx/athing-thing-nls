@@ -7,6 +7,7 @@ import io.github.athingx.athing.standard.thing.ThingLifeCycle;
 import io.github.athingx.athing.standard.thing.boot.ThInject;
 import io.github.athingx.athing.standard.thing.op.executor.ThingExecutor;
 import io.github.athingx.athing.thing.nls.ThingNlsCom;
+import io.github.athingx.athing.thing.nls.aliyun.asr.detect.SpeechDetectorImplBySnowboy;
 import io.github.athingx.athing.thing.nls.aliyun.asr.recognize.SpeechRecognizerImplByAliyun;
 import io.github.athingx.athing.thing.nls.aliyun.asr.transcribe.SpeechTranscriberImplByAliyun;
 import io.github.athingx.athing.thing.nls.aliyun.synthesis.SpeechSynthesizerImplByAliyun;
@@ -43,7 +44,10 @@ public class ThingNlsComImpl implements ThingNlsCom, ThingLifeCycle {
 
     @Override
     public ListenableFuture<SpeechDetector> openSpeechDetector() {
-        return null;
+        final ThingExecutor executor = thing.getThingOp().getThingExecutor();
+        return new Promisor().fulfill(executor, () -> {
+            return new SpeechDetectorImplBySnowboy(config, executor);
+        });
     }
 
     @Override

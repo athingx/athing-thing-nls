@@ -8,6 +8,7 @@ import io.github.athingx.athing.thing.nls.aliyun.sdk.tts.AliyunSpeechSynthesizer
 import io.github.athingx.athing.thing.nls.aliyun.sdk.tts.AliyunSpeechSynthesizerListener;
 import io.github.athingx.athing.thing.nls.aliyun.sdk.tts.AliyunSpeechSynthesizerResponse;
 import io.github.athingx.athing.thing.nls.aliyun.util.ArgumentUtils;
+import io.github.athingx.athing.thing.nls.aliyun.handler.SourceDataChannel;
 import io.github.athingx.athing.thing.nls.synthesis.SpeechSynthesisOption;
 import io.github.athingx.athing.thing.nls.synthesis.SpeechSynthesizer;
 import io.github.oldmanpushcart.jpromisor.FutureFunction;
@@ -27,7 +28,6 @@ public class SpeechSynthesizerImplByAliyun implements SpeechSynthesizer {
     private final ThingNlsConfig config;
     private final Executor executor;
     private final String _string;
-
 
     private final AliyunSpeechSynthesizer synthesizer;
     private final ReentrantLock lock = new ReentrantLock();
@@ -61,6 +61,16 @@ public class SpeechSynthesizerImplByAliyun implements SpeechSynthesizer {
         );
     }
 
+    // 设置参数
+    private void setupOption(SpeechSynthesisOption option, SampleRate sampleRate) {
+        synthesizer.setFormat(OutputFormatEnum.PCM);
+        synthesizer.setAppKey(config.getAppKey());
+        synthesizer.setSampleRate((int) sampleRate.getValue());
+        synthesizer.setSpeechRate(option.getSpeechRate());
+        synthesizer.setPitchRate(option.getPitchRate());
+        synthesizer.setVolume(option.getVolume());
+    }
+
     // 设置扩展参数
     private void setupExtOption(SpeechSynthesisOption option) {
         option.option("method", synthesizer::setMethod);
@@ -91,22 +101,54 @@ public class SpeechSynthesizerImplByAliyun implements SpeechSynthesizer {
                         final AudioFormat format = getAudioFormat(sampleRate);
 
                         // 设置参数
-                        synthesizer.setFormat(OutputFormatEnum.PCM);
-                        synthesizer.setAppKey(config.getAppKey());
-                        synthesizer.setSampleRate((int) sampleRate.getValue());
-                        synthesizer.setSpeechRate(option.getSpeechRate());
-                        synthesizer.setPitchRate(option.getPitchRate());
-                        synthesizer.setVolume(option.getVolume());
-                        synthesizer.setText(text);
+                        setupOption(option, sampleRate);
                         setupExtOption(option);
+                        synthesizer.setText(text);
 
 
                         // 打开音频线路
-                        try (final SourceDataLine line = openSourceDataLine(mixer, format)) {
+                        try (final SourceDataChannel channel = new SourceDataChannel(openSourceDataLine(mixer, format))) {
 
                             // 资源准备
-                            processRef.set(new Process(promise, line));
-                            line.start();
+                            processRef.set(new Process(promise, channel));
+                            channel.getSourceDataLine().start();
+                            synthesizer.start();
+
+                            // 等待语音合成结束
+                            synthesizer.waitForComplete();
+                            channel.getSourceDataLine().drain();
+                            promise.trySuccess();
+
+                        } finally {
+                            processRef.set(null);
+                            cleanExtOption();
+                        }
+
+                    } finally {
+                        lock.unlock();
+                    }
+                }));
+    }
+
+    @Override
+    public ListenableFuture<Void> synthesis(WritableByteChannel channel, SpeechSynthesisOption option, String text) {
+        return new Promisor().promise(promise ->
+                promise.fulfill(executor, (FutureFunction.FutureExecutable) () -> {
+                    lock.lockInterruptibly();
+                    try {
+
+                        final SampleRate sampleRate = getSampleRate(option);
+
+                        // 设置参数
+                        setupOption(option, sampleRate);
+                        setupExtOption(option);
+                        synthesizer.setText(text);
+
+                        // 打开音频线路
+                        try {
+
+                            // 资源准备
+                            processRef.set(new Process(promise, channel));
                             synthesizer.start();
 
                             // 等待语音合成结束
@@ -125,11 +167,6 @@ public class SpeechSynthesizerImplByAliyun implements SpeechSynthesizer {
     }
 
     @Override
-    public ListenableFuture<Void> synthesis(WritableByteChannel channel, SpeechSynthesisOption option, String text) {
-        return null;
-    }
-
-    @Override
     public void close() {
         synthesizer.close();
     }
@@ -142,7 +179,7 @@ public class SpeechSynthesizerImplByAliyun implements SpeechSynthesizer {
     /**
      * 处理器
      */
-    record Process(Promise<Void> promise, SourceDataLine line) {
+    record Process(Promise<Void> promise, WritableByteChannel channel) {
 
     }
 
@@ -151,12 +188,9 @@ public class SpeechSynthesizerImplByAliyun implements SpeechSynthesizer {
      */
     class InnerListener extends AliyunSpeechSynthesizerListener {
 
-        private final byte[] data = new byte[10240];
-
         @Override
         public void onComplete(AliyunSpeechSynthesizerResponse response) {
             final Process process = processRef.get();
-            process.line.drain();
             process.promise.trySuccess();
         }
 
@@ -172,16 +206,11 @@ public class SpeechSynthesizerImplByAliyun implements SpeechSynthesizer {
         @Override
         public void onMessage(ByteBuffer buffer) {
             final Process process = processRef.get();
-            final SourceDataLine source = process.line;
+            final WritableByteChannel channel = process.channel;
             final Promise<Void> promise = process.promise;
             try {
                 while (buffer.hasRemaining()) {
-                    final int length = Math.min(data.length, buffer.remaining());
-                    buffer.get(data, 0, length);
-                    int offset = 0;
-                    do {
-                        offset += source.write(data, offset, length - offset);
-                    } while (offset < length);
+                    channel.write(buffer);
                 }
             } catch (Exception cause) {
                 promise.tryException(cause);

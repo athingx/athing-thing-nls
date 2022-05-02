@@ -3,15 +3,17 @@ package io.github.athingx.athing.thing.nls.aliyun.asr.detect;
 import io.github.athingx.athing.thing.nls.SampleRate;
 import io.github.athingx.athing.thing.nls.aliyun.ThingNlsConfig;
 import io.github.athingx.athing.thing.nls.aliyun.asr.detect.snowboy.Snowboy;
+import io.github.athingx.athing.thing.nls.aliyun.handler.TargetDataChannel;
 import io.github.athingx.athing.thing.nls.aliyun.util.ArgumentUtils;
 import io.github.athingx.athing.thing.nls.asr.detect.SpeechDetectWakeUpOption;
 import io.github.athingx.athing.thing.nls.asr.detect.SpeechDetector;
 import io.github.oldmanpushcart.jpromisor.FutureFunction;
 import io.github.oldmanpushcart.jpromisor.ListenableFuture;
-import io.github.oldmanpushcart.jpromisor.Promise;
 import io.github.oldmanpushcart.jpromisor.Promisor;
 
 import javax.sound.sampled.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.Executor;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -21,7 +23,7 @@ public class SpeechDetectorImplBySnowboy implements SpeechDetector {
     private final Executor executor;
     private final String _string;
 
-    private final byte[] data = new byte[10240];
+    private final ByteBuffer buffer = ByteBuffer.allocate(10240);
     private final Snowboy snowboy;
     private final ReentrantLock lock = new ReentrantLock();
 
@@ -66,12 +68,14 @@ public class SpeechDetectorImplBySnowboy implements SpeechDetector {
             try {
                 final SampleRate sampleRate = getSampleRate(option);
                 final AudioFormat format = getAudioFormat(sampleRate);
-                try (final TargetDataLine line = openTargetDataLine(mixer, format)) {
+                try (final TargetDataChannel channel = new TargetDataChannel(openTargetDataLine(mixer, format))) {
 
-                    line.start();
+                    channel.getTargetDataLine().start();
                     while (!promise.isDone()) {
-                        final int size = line.read(data, 0, data.length);
-                        if (snowboy.detect(data, 0, size)) {
+                        buffer.clear();
+                        channel.read(buffer);
+                        buffer.flip();
+                        if (snowboy.detect(buffer.array(), buffer.arrayOffset(), buffer.remaining())) {
                             break;
                         }
                     }
@@ -84,8 +88,32 @@ public class SpeechDetectorImplBySnowboy implements SpeechDetector {
     }
 
     @Override
+    public ListenableFuture<Void> detectWakeUp(ReadableByteChannel channel, SpeechDetectWakeUpOption option) {
+        return new Promisor().<Void>promise().execute(promise -> promise.fulfill(executor, (FutureFunction.FutureExecutable) () -> {
+            lock.lockInterruptibly();
+            try {
+                while (!promise.isDone()) {
+                    buffer.clear();
+                    channel.read(buffer);
+                    buffer.flip();
+                    if (snowboy.detect(buffer.array(), buffer.arrayOffset(), buffer.remaining())) {
+                        break;
+                    }
+                }
+            } finally {
+                lock.unlock();
+            }
+        }));
+    }
+
+    @Override
     public void close() {
         snowboy.close();
+    }
+
+    @Override
+    public String toString() {
+        return _string;
     }
 
 }

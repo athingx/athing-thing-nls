@@ -14,10 +14,13 @@ import io.github.athingx.athing.thing.nls.asr.Sentence;
 import io.github.athingx.athing.thing.nls.asr.SentenceHandler;
 import io.github.athingx.athing.thing.nls.asr.recognize.SpeechRecognizeOption;
 import io.github.athingx.athing.thing.nls.asr.recognize.SpeechRecognizer;
+import io.github.athingx.athing.thing.nls.aliyun.handler.TargetDataChannel;
 import io.github.oldmanpushcart.jpromisor.FutureFunction;
 import io.github.oldmanpushcart.jpromisor.Promise;
 
 import javax.sound.sampled.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
@@ -30,7 +33,7 @@ public class SpeechRecognizerImplByAliyun implements SpeechRecognizer {
     private final Executor executor;
     private final String _string;
 
-    private final byte[] data = new byte[10240];
+    private final ByteBuffer buffer = ByteBuffer.allocate(10240);
     private final AliyunSpeechRecognizer recognizer;
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicReference<Process> processRef = new AtomicReference<>();
@@ -60,6 +63,13 @@ public class SpeechRecognizerImplByAliyun implements SpeechRecognizer {
                 true,
                 false
         );
+    }
+
+    // 设置参数
+    private void setOption(SampleRate sampleRate) {
+        recognizer.setAppKey(config.getAppKey());
+        recognizer.setFormat(InputFormatEnum.PCM);
+        recognizer.setSampleRate((int) sampleRate.getValue());
     }
 
     // 设置扩展参数
@@ -92,8 +102,41 @@ public class SpeechRecognizerImplByAliyun implements SpeechRecognizer {
         return recognizer.getState() == STATE_REQUEST_CONFIRMED;
     }
 
+    // 是否已到达时间限制
     private boolean isTimeLimit(long start, long limit) {
         return System.currentTimeMillis() - start >= limit;
+    }
+
+    // 录制循环
+    private void recordingLoop(SpeechRecognizeOption option, RecordingPromise promise, ReadableByteChannel channel) throws Exception {
+        promise.recording(() -> {
+
+            final long start = System.currentTimeMillis();
+            final long limit = Math.min(option.getSpeechTimeLimit(), 60000);
+            while (!promise.isDone() && isStarted()) {
+
+                // 如果已经到达录制时长限制，则停止录制
+                if (isTimeLimit(start, limit)) {
+                    promise.<RecordingPromise>promise().stopRecording();
+                    break;
+                }
+
+                buffer.clear();
+                channel.read(buffer);
+                buffer.flip();
+
+                /*
+                 * 这里需要加一把锁，因为外边随时可能会进行stop()操作
+                 */
+                synchronized (recognizer) {
+                    if (isStarted()) {
+                        recognizer.send(buffer.array(), buffer.arrayOffset(), buffer.remaining());
+                    }
+                }
+
+            }
+
+        });
     }
 
     @Override
@@ -107,9 +150,7 @@ public class SpeechRecognizerImplByAliyun implements SpeechRecognizer {
                 final AudioFormat format = getAudioFormat(sampleRate);
 
                 // 设置参数
-                recognizer.setAppKey(config.getAppKey());
-                recognizer.setFormat(InputFormatEnum.PCM);
-                recognizer.setSampleRate((int) sampleRate.getValue());
+                setOption(sampleRate);
                 setupExtOption(option);
 
                 // 打开音频线路
@@ -121,31 +162,42 @@ public class SpeechRecognizerImplByAliyun implements SpeechRecognizer {
                     recognizer.start();
 
                     // 语音识别开始
-                    promise.<RecordingPromise>promise().recording(() -> {
+                    recordingLoop(option, promise.promise(), new TargetDataChannel(line));
 
-                        final long start = System.currentTimeMillis();
-                        final long limit = Math.min(option.getSpeechTimeLimit(), 60000);
-                        while (!promise.isDone() && isStarted()) {
+                } finally {
+                    processRef.set(null);
+                    cleanExtOption();
+                }
 
-                            // 如果已经到达录制时长限制，则停止录制
-                            if (isTimeLimit(start, limit)) {
-                                promise.<RecordingPromise>promise().stopRecording();
-                                break;
-                            }
+            } finally {
+                lock.unlock();
+            }
 
-                            final int size = line.read(data, 0, data.length);
+        })).future();
+    }
 
-                            /*
-                             * 这里需要加一把锁，因为外边随时可能会进行stop()操作
-                             */
-                            synchronized (recognizer) {
-                                if (isStarted()) {
-                                    recognizer.send(data, 0, size);
-                                }
-                            }
+    @Override
+    public RecordingFuture recognize(ReadableByteChannel channel, SpeechRecognizeOption option, SentenceHandler handler) {
+        return new InnerRecordingPromise().execute(promise -> promise.fulfill(executor, (FutureFunction.FutureExecutable) () -> {
 
-                        }
-                    });
+            lock.lockInterruptibly();
+            try {
+
+                final SampleRate sampleRate = getSampleRate(option);
+
+                // 设置参数
+                setOption(sampleRate);
+                setupExtOption(option);
+
+                // 打开音频线路
+                try {
+
+                    // 资源准备
+                    processRef.set(new Process(promise, handler));
+                    recognizer.start();
+
+                    // 语音识别开始
+                    recordingLoop(option, promise.promise(), channel);
 
                 } finally {
                     processRef.set(null);
